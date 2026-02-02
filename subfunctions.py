@@ -85,9 +85,12 @@ print(m,"kg")
 # get_gear_ratio (gives gear ratio of the speed reducer)
 
 def get_gear_ratio(speed_reducer):
+  if isinstance(speed_reducer, dict):
     Ng = 0
     Ng += (speed_reducer["diam_gear"]/speed_reducer["diam_pinion"])**2
     return Ng
+  else:
+    raise Exception('Invalid Input for get_gear_ratio')
 Ng = get_gear_ratio(speed_reducer)
 print(Ng)
 
