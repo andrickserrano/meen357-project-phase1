@@ -1,5 +1,5 @@
 import numpy as np
-from math import erf
+from scipy.special import erf
 
 # Constants
 
@@ -112,31 +112,35 @@ def get_gear_ratio(speed_reducer):
 # tau_dcmotor (returns motor shaft torque in Nm given shaft speed in rad/s)
 
 def tau_dcmotor(omega, motor):
-    
-    if not np.isscalar(omega) and not isinstance(omega, np.ndarray):
-        raise Exception("Enter omega as a scalar or numpy array")
 
     if not isinstance(motor, dict):
-        raise Exception("enter motor value as a dictionary")
+        raise Exception("motor must be a dictionary")
 
-    scalar_input = np.isscalar(omega)
+    if not np.isscalar(omega) and not isinstance(omega, np.ndarray):
+        raise Exception("omega must be a scalar or numpy array")
 
-    omega = np.asarray(omega, dtype=float)
+    try:
+        omega = np.asarray(omega, dtype=float)
+    except Exception:
+        raise Exception("omega must contain numeric values")
+    
+    if omega.ndim > 1:
+        raise Exception("omega must be a scalar or 1D array")
+    
+    scalar_input = omega.ndim == 0
 
     tau_stall = motor["torque_stall"]
     tau_noload = motor["torque_noload"]
     omega_noload = motor["speed_noload"]
 
-    tau = tau_stall-((tau_stall-tau_noload)/omega_noload)*omega
- 
-    tau = np.where(omega > omega_noload, 0.0, tau)
+    tau = tau_stall - ((tau_stall - tau_noload) / omega_noload) * omega
 
+    tau = np.where(omega > omega_noload, 0.0, tau)
     tau = np.where(omega < 0, tau_stall, tau)
 
-    if scalar_input:
-        return tau.item()
-    else:
-        return tau
+    return tau.item() if scalar_input else tau
+
+
 
 #test code
 # omega = np.array([0, 0.1, 0.2, 0.3])
@@ -145,7 +149,6 @@ def tau_dcmotor(omega, motor):
 
 
 # F_drive (gives combined drive force acting on the rover due to all 6 wheels)
-import numpy as np
 
 def F_drive(omega, rover):
 
@@ -221,44 +224,32 @@ def F_gravity(terrain_angle, rover, planet):
 
 
 # F_rolling
+
 def F_rolling(omega, terrain_angle, rover, planet, Crr):
-
-   
-    if (not np.isscalar(omega) and not isinstance(omega, np.ndarray)):
-        raise Exception("omega must be a scalar or numpy array")
-
-    if (not np.isscalar(terrain_angle) and not isinstance(terrain_angle, np.ndarray)):
-        raise Exception("terrain angle must be a scalar or numpy array")
-
-    if not isinstance(rover, dict):
-        raise Exception("rover specs must be a dictionary")
-
-    if not isinstance(planet, dict):
-        raise Exception("planet specs must be a dictionary")
-
-    if not np.isscalar(Crr) or Crr <= 0:
-        raise Exception("Crr must be a positive scalar")
 
     omega = np.asarray(omega, dtype=float)
     terrain_angle = np.asarray(terrain_angle, dtype=float)
 
     if omega.shape != terrain_angle.shape:
-        raise Exception("omega and terrain_angle must be the same size.")
+        raise Exception("omega and terrain_angle must be the same size")
 
     if np.any(terrain_angle < -75) or np.any(terrain_angle > 75):
-        raise Exception("Terrain angles must be between -75 and +75 degrees.")
-   
-    v_rover = omega*rover["wheel_assembly"]["wheel"]["radius"]
+        raise Exception("terrain_angle must be between -75 and +75 degrees")
 
+    speed_reducer = rover["wheel_assembly"]["speed_reducer"]
+    Ng = get_gear_ratio(speed_reducer)
+
+    r = rover["wheel_assembly"]["wheel"]["radius"]
+    v_rover = (omega*r)/Ng
     theta = np.deg2rad(terrain_angle)
 
     Fn = get_mass(rover) * planet["g"] * np.cos(theta)
-
     Frr_simple = Crr * Fn
+    Frr = -np.sign(v_rover) * erf(40 * np.abs(v_rover)) * Frr_simple
 
-    Frr = erf(40*v_rover)*Frr_simple
+    return Frr.item() if Frr.ndim == 0 else Frr
 
-    return Frr
+
 
 # #test code
 # Frr = F_rolling(omega,terrain_angle, rover, planet, Crr)
@@ -270,10 +261,10 @@ def F_rolling(omega, terrain_angle, rover, planet, Crr):
 
 def F_net(omega, terrain_angle, rover, planet, Crr):
 
-    if (not np.isscalar(omega) and not isinstance(omega, np.ndarray)):
+    if not np.isscalar(omega) and not isinstance(omega, np.ndarray):
         raise Exception("omega must be a scalar or numpy array")
 
-    if (not np.isscalar(terrain_angle) and not isinstance(terrain_angle, np.ndarray)):
+    if not np.isscalar(terrain_angle) and not isinstance(terrain_angle, np.ndarray):
         raise Exception("terrain_angle must be a scalar or numpy array")
 
     if not isinstance(rover, dict):
@@ -288,21 +279,18 @@ def F_net(omega, terrain_angle, rover, planet, Crr):
     omega = np.asarray(omega, dtype=float)
     terrain_angle = np.asarray(terrain_angle, dtype=float)
 
+   
     if omega.shape != terrain_angle.shape:
-        raise Exception("omega and terrain_angle must have the same array size")
+        raise Exception("omega and terrain_angle must be the same size")
 
     if np.any(terrain_angle < -75) or np.any(terrain_angle > 75):
         raise Exception("terrain_angle must be between -75 and 75 degrees")
 
-    
-    Fd  = F_drive(omega, rover)                       
-    Fgt = F_gravity(terrain_angle, rover, planet)     
+    Fd  = F_drive(omega, rover)
+    Fgt = F_gravity(terrain_angle, rover, planet)
     Frr = F_rolling(omega, terrain_angle, rover, planet, Crr)
 
-
-    Fnet = Fd + Fgt + Frr
-
-    return Fnet
+    return Fd + Fgt + Frr
 
 
 #test code
