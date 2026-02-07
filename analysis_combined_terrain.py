@@ -5,6 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from subfunctions import F_net, rover, planet, get_gear_ratio
+from matplotlib.ticker import FuncFormatter
 
 # rolling resistance array
 Crr_array = np.linspace(0.01,0.5,25)
@@ -70,7 +71,7 @@ for i in range(N):
             VMAX[i, j] = (r * omega_star) / Ng
 
 
-# 3d plot to show relation between all data sets
+# 3d plot 
 fig = plt.figure(figsize=(9, 7))
 ax = fig.add_subplot(111, projection='3d')
 
@@ -82,15 +83,25 @@ surf = ax.plot_surface(
     edgecolor="none"
 )
 
-# Labels and label formating
+# Labels and label formatting
 ax.set_xlabel("Rolling Resistance Coefficient Crr [-]", labelpad=12)
 ax.set_ylabel("Terrain Slope Angle [deg]", labelpad=12)
 ax.set_zlabel("Maximum Rover Speed [m/s]", labelpad=12)
 
 ax.set_title("Maximum Rover Speed vs. Slope and Rolling Resistance", pad=18)
 
-# Ccolor bar
-fig.colorbar(surf, ax=ax, shrink=0.6, aspect=12, label="Speed [m/s]")
+# Colorbar
+cbar = fig.colorbar(surf, ax=ax, shrink=0.6, aspect=12, label="Speed [m/s]")
+
+vmin = np.nanmin(VMAX)
+vmax = np.nanmax(VMAX)
+# fixing colorbar issues
+def flip_labels(x, pos):
+    # Relabel tick value x as (vmin+vmax - x)
+    return f"{(vmin + vmax - x):.2f}"
+
+cbar.formatter = FuncFormatter(flip_labels)
+cbar.update_ticks()
 
 plt.tight_layout()
 plt.show()
