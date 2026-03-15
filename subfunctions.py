@@ -1,5 +1,9 @@
 import numpy as np
 from scipy.special import erf
+from scipy.interpolate import interp1d
+from scipy.integrate import solve_ivp
+from define_experiment import experiment1
+
 
 # Constants
 
@@ -296,3 +300,385 @@ def F_net(omega, terrain_angle, rover, planet, Crr):
 #test code
 # Fnet = F_net(omega, terrain_angle, rover, planet, Crr)
 # print(Fnet, "N")
+
+# Motor W
+
+def motorW(v, rover):
+    
+    """
+    computes he rotational speed of the motor shaft [rad/s] given the translational 
+    velocity of the rover and the rover dictionary.
+
+   Input:
+   v : float or numpy.ndarray
+       Rover velocity in m/s.
+   rover : dict
+       Dictionary containing rover parameters.
+
+  Output:
+   w : float or numpy.ndarray
+       Motor shaft angular speed in rad/s.
+   """
+
+    if not isinstance(rover, dict):
+        raise Exception("input must be a rover dictionary.")
+
+    if not np.isscalar(v) and not isinstance(v, np.ndarray):
+        raise Exception("input must be a scalar or a numpy array.")
+
+    try:
+        v = np.asarray(v, dtype=float)
+    except:
+        raise Exception("Velocity input must contain numeric values.")
+
+    if v.ndim > 1:
+        raise Exception("Velocity input must be a scalar or 1D numpy array.")
+
+    scalar_input = v.ndim == 0
+
+    r = rover["wheel_assembly"]["wheel"]["radius"]
+    Ng = get_gear_ratio(rover["wheel_assembly"]["speed_reducer"])
+
+    w = (v / r) * Ng
+
+
+    return w.item() if scalar_input else w
+
+
+# Rover Dynamics
+
+def rover_dynamics(t, y, rover, planet, experiment):
+    """
+    the derivative of the state vector (state vector is: [velocity, position]) for the rover given its
+    current state. It requires rover and experiment dictionary input parameters. 
+    It is intended to be passed to an ODE solver.
+
+    Input:
+    t : float
+        Current simulation time (s)
+    y : numpy.ndarray
+        y[0] = rover velocity (m/s)
+        y[1] = rover position (m)
+    rover : dict
+        Rover parameters
+    planet : dict
+        Planet parameters
+    experiment : dict
+        Terrain and experiment 
+
+    Output
+    dydt : numpy.ndarray
+        Derivative of state vector [acceleration, velocity]
+    """
+
+    if not np.isscalar(t):
+        raise Exception("t must be a scalar")
+
+    y = np.asarray(y, dtype=float)
+
+    if y.size != 2:
+        raise Exception("y must contain [velocity, position]")
+
+    if not isinstance(rover, dict):
+        raise Exception("rover must be a dictionary")
+
+    if not isinstance(planet, dict):
+        raise Exception("planet must be a dictionary")
+
+    if not isinstance(experiment, dict):
+        raise Exception("experiment must be a dictionary")
+
+
+    v = y[0]
+    x = y[1]
+
+    alpha_dist = np.array(experiment["alpha_dist"], dtype=float)
+    alpha_deg = np.array(experiment["alpha_deg"], dtype=float)
+
+    alpha_fun = interp1d(alpha_dist, alpha_deg, fill_value="extrapolate")
+
+    terrain_angle = float(alpha_fun(x))
+
+    omega = motorW(v, rover)
+
+    Crr = experiment["Crr"]
+
+    Fnet_val = F_net(omega, terrain_angle, rover, planet, Crr)
+
+    m = get_mass(rover)
+
+    acc = Fnet_val / m
+
+    dydt = np.array([acc, v], dtype=float)
+
+    return dydt
+
+# Mechpower
+
+def mechpower(v, rover):
+
+    """
+    Computes the instantaneous mechanical power output by a single DC motor at each point in a given
+    velocity profile.
+
+
+    Input:
+    v : float or numpy.ndarray
+        Rover velocity (m/s)
+    rover : dict
+        Dictionary containing rover parameters
+
+    Output:
+    P : float or numpy.ndarray
+        Mechanical power produced by the motor (W)
+    """
+
+    if not np.isscalar(v) and not isinstance(v, np.ndarray):
+        raise Exception("input must be a scalar or a numpy array.")
+
+    if not isinstance(rover, dict):
+        raise Exception("input must be a rover dictionary.")
+
+    try:
+        v = np.asarray(v, dtype=float)
+    except:
+        raise Exception("Velocity input must contain numeric values.")
+
+    if v.ndim > 1:
+        raise Exception("Velocity input must be a scalar or 1D numpy array.")
+
+    scalar_input = v.ndim == 0
+
+    omega = motorW(v, rover)
+
+    motor = rover["wheel_assembly"]["motor"]
+    tau = tau_dcmotor(omega, motor)
+
+    P = tau * omega
+
+    return float(P) if scalar_input else P
+
+# Battery Energy
+
+
+def battenergy(t, v, rover):
+    """
+    computes the total electrical energy consumed from the rover battery pack over a simulation profile,
+    defined as time-velocity pairs. This function assumes all 6 motors are driven from the same 
+    battery pack.
+    This function accounts for energy consumed by all motors).
+
+
+    Input:
+    t : numpy.ndarray
+        Time array (s)
+    v : numpy.ndarray
+        Rover velocity array (m/s)
+    rover : dict
+        Rover parameter dictionary
+
+    Output:
+    E : float
+        Total battery energy consumed (J)
+    """
+
+    if not isinstance(t, np.ndarray) or not isinstance(v, np.ndarray):
+        raise Exception("t and v must be numpy arrays")
+
+    if t.ndim != 1 or v.ndim != 1:
+        raise Exception("t and v must be 1D arrays")
+
+    if len(t) != len(v):
+        raise Exception("t and v must be the same length")
+
+    if not isinstance(rover, dict):
+        raise Exception("rover must be a dictionary")
+
+
+
+    P_mech = mechpower(v, rover)
+
+
+    omega = motorW(v, rover)
+    motor = rover["wheel_assembly"]["motor"]
+    tau = tau_dcmotor(omega, motor)
+
+  
+    tau_data = np.array(motor["effcy_tau"], dtype=float)
+    eff_data = np.array(motor["effcy"], dtype=float)
+
+    eff_fun = interp1d(
+        tau_data,
+        eff_data,
+        bounds_error=False,
+        fill_value=(eff_data[0], eff_data[-1])
+    )
+
+    eff = eff_fun(tau)
+
+   
+    P_elec = P_mech / eff
+
+   
+    P_total = 6 * P_elec
+
+   
+    E = np.trapz(P_total, t)
+
+    return float(E)
+
+
+# Simulate Rover
+def simulate_rover(rover, planet, experiment, end_event):
+    
+    """
+   This function integrates the trajectory of a rover.
+
+   Inputs:
+   rover : dict
+       Dictionary containing rover parameters.
+
+   planet : dict
+       Dictionary containing planetary parameters (e.g., gravity).
+
+   experiment : dict
+       Dictionary containing experiment parameters including:
+       - time_range
+       - initial_conditions
+       - terrain distance and angles
+       - rolling resistance coefficient
+
+   end_event : dict
+       Dictionary containing mission termination conditions:
+       - max_distance
+       - max_time
+       - min_velocity
+
+   Outputs:
+   rover : dict
+       The rover dictionary with a telemetry field added containing:
+
+       telemetry["time"] : numpy.ndarray
+           Time history of the simulation (s)
+
+       telemetry["velocity"] : numpy.ndarray
+           Rover velocity over time (m/s)
+
+       telemetry["position"] : numpy.ndarray
+           Rover position over time (m)
+
+       telemetry["power"] : numpy.ndarray
+           Mechanical power output of the motors (W)
+
+       telemetry["battery_energy"] : float
+           Total battery energy consumed (J)
+
+       telemetry["completion_time"] : float
+           Total mission time (s)
+
+       telemetry["distance_traveled"] : float
+           Total distance traveled (m)
+
+       telemetry["max_velocity"] : float
+           Maximum rover velocity (m/s)
+
+       telemetry["average_velocity"] : float
+           Average rover velocity (m/s)
+   """
+
+    if not isinstance(rover, dict):
+        raise Exception("rover must be a dictionary")
+
+    if not isinstance(planet, dict):
+        raise Exception("planet must be a dictionary")
+
+    if not isinstance(experiment, dict):
+        raise Exception("experiment must be a dictionary")
+
+    if not isinstance(end_event, dict):
+        raise Exception("end_event must be a dictionary")
+
+
+    
+    t0, tf = experiment["time_range"]
+    v0, x0 = experiment["initial_conditions"]
+
+    y0 = np.array([float(v0), float(x0)], dtype=float)
+
+
+  
+    event_fun = end_of_mission_event(end_event)
+
+    
+    event_fun.terminal = True
+    event_fun.direction = 0
+
+ 
+    sol = solve_ivp(
+        fun=lambda t, y: rover_dynamics(t, y, rover, planet, experiment),
+        t_span=(t0, tf),
+        y0=y0,
+        method="RK45",
+        events=event_fun,
+        max_step=0.1      
+    )
+
+   
+    time     = sol.t
+    velocity = sol.y[0]
+    position = sol.y[1]
+
+   
+    power  = mechpower(velocity, rover)
+    energy = battenergy(time, velocity, rover)
+
+
+    rover["telemetry"] = {
+        "time": time,
+        "velocity": velocity,
+        "position": position,
+        "power": power,
+        "battery_energy": float(energy),
+        "completion_time": float(time[-1]),
+        "distance_traveled": float(position[-1]),
+        "max_velocity": float(np.max(velocity)),
+        "average_velocity": float(np.mean(velocity)),
+    }
+
+    return rover
+
+
+def end_of_mission_event(end_event):
+    """
+    Defines an event that terminates the mission simulation. Mission is over
+    when rover reaches a certain distance, has moved for a maximum simulation 
+    time or has reached a minimum velocity.            
+    """
+    
+    mission_distance = end_event['max_distance']
+    mission_max_time = end_event['max_time']
+    mission_min_velocity = end_event['min_velocity']
+    
+    # Assume that y[1] is the distance traveled
+    distance_left = lambda t,y: mission_distance - y[1]
+    distance_left.terminal = True
+    
+    time_left = lambda t,y: mission_max_time - t
+    time_left.terminal = True
+    
+    velocity_threshold = lambda t,y: y[0] - mission_min_velocity;
+    velocity_threshold.terminal = True
+    velocity_threshold.direction = -1
+    
+    # terminal indicates whether any of the conditions can lead to the
+    # termination of the ODE solver. In this case all conditions can terminate
+    # the simulation independently.
+    
+    # direction indicates whether the direction along which the different
+    # conditions is reached matters or does not matter. In this case, only
+    # the direction in which the velocity treshold is arrived at matters
+    # (negative)
+    
+    events = [distance_left, time_left, velocity_threshold]
+    
+    return events
