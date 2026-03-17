@@ -2,7 +2,7 @@ import numpy as np
 from scipy.special import erf
 from scipy.interpolate import interp1d
 from scipy.integrate import solve_ivp
-from define_experiment import experiment1
+
 
 
 # Constants
@@ -392,14 +392,19 @@ def rover_dynamics(t, y, rover, planet, experiment):
     v = y[0]
     x = y[1]
 
-    alpha_dist = np.array(experiment["alpha_dist"], dtype=float)
-    alpha_deg = np.array(experiment["alpha_deg"], dtype=float)
+    alpha_dist = np.array(experiment["alpha_dist"])
+    alpha_deg = np.array(experiment["alpha_deg"])
 
-    alpha_fun = interp1d(alpha_dist, alpha_deg, fill_value="extrapolate")
+    alpha_fun = interp1d(alpha_dist, alpha_deg, kind = 'cubic', fill_value="extrapolate")
 
-    terrain_angle = float(alpha_fun(x))
+    
 
     omega = motorW(v, rover)
+    
+    if isinstance (omega, np.ndarray):
+        terrain_angle = alpha_fun(x)
+    else:
+        terrain_angle = float(alpha_fun(x))
 
     Crr = experiment["Crr"]
 
@@ -407,9 +412,9 @@ def rover_dynamics(t, y, rover, planet, experiment):
 
     m = get_mass(rover)
 
-    acc = Fnet_val / m
+    a = Fnet_val / m
 
-    dydt = np.array([acc, v], dtype=float)
+    dydt = np.array([a, v])
 
     return dydt
 
@@ -482,17 +487,11 @@ def battenergy(t, v, rover):
         Total battery energy consumed (J)
     """
 
-    if not isinstance(t, np.ndarray) or not isinstance(v, np.ndarray):
-        raise Exception("t and v must be numpy arrays")
-
-    if t.ndim != 1 or v.ndim != 1:
-        raise Exception("t and v must be 1D arrays")
-
-    if len(t) != len(v):
-        raise Exception("t and v must be the same length")
-
-    if not isinstance(rover, dict):
-        raise Exception("rover must be a dictionary")
+    if (isinstance(rover, dict) and isinstance(v, np.ndarray) and isinstance(t, np.ndarray)) == False:
+        raise Exception("Rover must be a dict and v and t must be numpy arrays")
+    
+    if len(v) != len(t):
+        raise Exception("v and t must be equal size numpy arrays")
 
 
 
@@ -503,29 +502,13 @@ def battenergy(t, v, rover):
     motor = rover["wheel_assembly"]["motor"]
     tau = tau_dcmotor(omega, motor)
 
-  
-    tau_data = np.array(motor["effcy_tau"], dtype=float)
-    eff_data = np.array(motor["effcy"], dtype=float)
+    effcy_tau = rover["wheel_assembly"]["motor"]["effcy_tau"]
+    effcy = rover["wheel_assembly"]["motor"]["effcy"]
+    effcy_fun = interp1d(effcy_tau, effcy, kind = 'cubic')
 
-    eff_fun = interp1d(
-        tau_data,
-        eff_data,
-        bounds_error=False,
-        fill_value=(eff_data[0], eff_data[-1])
-    )
-
-    eff = eff_fun(tau)
-
-   
-    P_elec = P_mech / eff
-
-   
-    P_total = 6 * P_elec
-
-   
-    E = np.trapz(P_total, t)
-
-    return float(E)
+    y = P_mech / effcy_fun(tau)
+    E = np.trapz(y, x = t) * 6
+    return E
 
 
 # Simulate Rover
