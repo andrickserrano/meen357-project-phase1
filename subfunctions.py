@@ -595,9 +595,6 @@ def simulate_rover(rover, planet, experiment, end_event):
     event_fun = end_of_mission_event(end_event)
 
     
-    event_fun.terminal = True
-    event_fun.direction = 0
-
  
     sol = solve_ivp(
         fun=lambda t, y: rover_dynamics(t, y, rover, planet, experiment),
