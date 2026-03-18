@@ -229,7 +229,7 @@ def F_gravity(terrain_angle, rover, planet):
 
 
 
-# F_rolling
+# F_rolling calculates the rolling resistance force on the rover
 
 def F_rolling(omega, terrain_angle, rover, planet, Crr):
 
@@ -264,7 +264,7 @@ def F_rolling(omega, terrain_angle, rover, planet, Crr):
 
 
 # F_net
-
+# calcualtes the net forrce acting on the rover from driove,gravity, and rolling resistance
 def F_net(omega, terrain_angle, rover, planet, Crr):
 
     if not np.isscalar(omega) and not isinstance(omega, np.ndarray):
@@ -304,7 +304,7 @@ def F_net(omega, terrain_angle, rover, planet, Crr):
 # print(Fnet, "N")
 
 # Motor W
-
+# calcualtes motor shaft rotational speed from rover translational velocity
 def motorW(v, rover):
     
     """
