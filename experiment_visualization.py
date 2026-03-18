@@ -1,4 +1,4 @@
-
+# Task 2: creating a graph of terrain angle vs position given certain data points
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.interpolate import interp1d
