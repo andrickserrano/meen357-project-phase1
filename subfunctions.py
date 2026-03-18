@@ -38,6 +38,8 @@ motor = {"torque_stall": tau_s,
          "torque_noload": tau_NL,
          "speed_noload": omega_NL,
          "mass": motor_mass
+         "effcy_tau": np.array([0, 10, 20, 40, 70, 165]),
+         "effcy": np.array([0, 0.60, 0.78, 0.73, 0.52, 0.04])
          }
 
 chassis = {"mass": chassis_mass
