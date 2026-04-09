@@ -1,1 +1,112 @@
+import numpy as np
+import matplotlib.pyplot as plt
 
+from define_edl_system import define_edl_system_1
+from define_planet import define_planet
+from define_mission_events import define_mission_events
+from subfunctions_EDL import simulate_edl
+from redefine_edl_system import redefine_edl_system
+
+
+mars = define_planet()
+mission_events = define_mission_events()
+
+tmax = 2000
+
+diameters = np.arange(14, 19.5, 0.5)
+
+termination_time = []
+landing_velocity = []
+landing_success = []
+
+for D in diameters:
+
+    edl_system = define_edl_system_1()
+    edl_system = redefine_edl_system(edl_system)
+
+    # Turn on Task 6 Mach-corrected parachute drag model
+    edl_system['drag_model'] = 'mach_corrected'
+
+    # Initial conditions required by the project
+    edl_system['altitude'] = 11000
+    edl_system['velocity'] = -590
+
+    edl_system['rocket']['on'] = False
+    edl_system['parachute']['deployed'] = True
+    edl_system['parachute']['ejected'] = False
+    edl_system['heat_shield']['ejected'] = False
+    edl_system['sky_crane']['on'] = False
+    edl_system['speed_control']['on'] = False
+    edl_system['position_control']['on'] = False
+    edl_system['rover']['on_ground'] = False
+
+    edl_system['parachute']['diameter'] = D
+
+    t, Y, edl_system = simulate_edl(edl_system, mars, mission_events, tmax, False)
+
+    t_end = t[-1]
+
+    # Rover touchdown speed = sky crane vertical speed + rover speed relative to crane
+    v_edl_end = Y[0, -1]
+    v_rover_rel_end = Y[5, -1]
+    rover_touchdown_speed = v_edl_end + v_rover_rel_end
+
+    skycrane_altitude_end = Y[1, -1]
+
+    termination_time.append(t_end)
+    landing_velocity.append(rover_touchdown_speed)
+
+    if (
+        edl_system['rover']['on_ground']
+        and abs(rover_touchdown_speed) <= abs(edl_system['sky_crane']['danger_speed'])
+        and skycrane_altitude_end >= edl_system['sky_crane']['danger_altitude']
+    ):
+        landing_success.append(1)
+    else:
+        landing_success.append(0)
+
+termination_time = np.array(termination_time)
+landing_velocity = np.array(landing_velocity)
+landing_success = np.array(landing_success)
+
+fig, axs = plt.subplots(3, 1, figsize=(8, 12))
+
+axs[0].plot(diameters, termination_time, 'o-')
+axs[0].set_xlabel('Parachute Diameter (m)')
+axs[0].set_ylabel('Termination Time (s)')
+axs[0].set_title('Simulation Time vs Parachute Diameter (Modified Drag Model)')
+axs[0].grid()
+
+axs[1].plot(diameters, landing_velocity, 'o-')
+axs[1].set_xlabel('Parachute Diameter (m)')
+axs[1].set_ylabel('Rover Touchdown Speed (m/s)')
+axs[1].set_title('Rover Touchdown Speed vs Parachute Diameter (Modified Drag Model)')
+axs[1].grid()
+
+axs[2].plot(diameters, landing_success, 'o-')
+axs[2].set_xlabel('Parachute Diameter (m)')
+axs[2].set_ylabel('Landing Success (1 = Success, 0 = Failure)')
+axs[2].set_title('Landing Success vs Parachute Diameter (Modified Drag Model)')
+axs[2].set_ylim(-0.1, 1.1)
+axs[2].grid()
+
+plt.tight_layout()
+plt.show()
+
+successful_diams = diameters[landing_success == 1]
+
+print("Diameters tested:", diameters)
+print("Termination times (s):", termination_time)
+print("Rover touchdown speeds (m/s):", landing_velocity)
+print("Landing success array:", landing_success)
+
+if successful_diams.size > 0:
+    print("Successful diameters:", successful_diams)
+
+    successful_times = termination_time[landing_success == 1]
+    best_idx = np.argmin(successful_times)
+    best_diameter = successful_diams[best_idx]
+
+    print("Recommended diameter based on fastest successful landing:", best_diameter, "m")
+else:
+    print("No successful diameters found in the tested range.")
