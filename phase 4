@@ -1,0 +1,156 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Mon Nov 15 22:58:03 2021
+
+@author: Marvin Engineering Design Team
+"""
+
+import numpy as np
+from subfunctions_Phase4 import *
+from define_experiment import *
+from scipy.optimize import minimize, Bounds, NonlinearConstraint
+import pickle
+import sys
+
+
+planet = define_planet()
+edl_system = define_edl_system()
+mission_events = define_mission_events()
+
+edl_system = define_chassis(edl_system,'carbon')
+edl_system = define_motor(edl_system,'base')
+edl_system = define_batt_pack(edl_system,'PbAcid-1', 10)
+
+tmax = 5000
+
+edl_system['altitude'] = 11000
+edl_system['velocity'] = -587
+edl_system['parachute']['deployed'] = True
+edl_system['parachute']['ejected'] = False
+edl_system['rover']['on_ground'] = False
+
+experiment, end_event = experiment1()
+
+
+min_strength = 40000
+max_cost = 7.2e6
+max_batt_energy_per_meter = edl_system['rover']['power_subsys']['battery']['capacity']/1000
+
+max_landing_velocity = 1.0  # |v| ≤ 1 m/s
+
+
+bounds = Bounds([14, 0.2, 250, 0.05, 100],
+                [19, 0.7, 800, 0.12, 290])
+
+x0 = np.array([18, 0.5, 500, 0.09, 200])
+
+
+def obj_wrapper(x):
+    return obj_fun_time(x, edl_system, planet,
+                        mission_events, tmax,
+                        experiment, end_event)
+
+
+def constraint_wrapper(x):
+
+    c = constraints_edl_system(
+        x,
+        edl_system,
+        planet,
+        mission_events,
+        tmax,
+        experiment,
+        end_event,
+        min_strength,
+        max_landing_velocity,
+        max_cost,
+        max_batt_energy_per_meter
+    )
+
+    
+    try:
+        landing_v = edl_system['rover_touchdown_speed']
+    except:
+        # fallback safety: rerun minimal sim if needed
+        _, _, temp_sys = simulate_edl(edl_system, planet, mission_events, tmax, False)
+        landing_v = temp_sys['rover_touchdown_speed']
+
+    # overwrite the velocity constraint (ASSUMED INDEX = 1)
+    c[1] = abs(landing_v) - max_landing_velocity
+
+    return c
+
+nonlinear_constraint = NonlinearConstraint(constraint_wrapper, -np.inf, 0)
+
+
+options = {
+    'maxiter': 200,
+    'verbose': 3,
+    'disp': True
+}
+
+res = minimize(
+    obj_wrapper,
+    x0,
+    method='trust-constr',
+    bounds=bounds,
+    constraints=nonlinear_constraint,
+    options=options
+)
+
+c = constraint_wrapper(res.x)
+
+if np.max(c) > 0:
+    print("WARNING: still infeasible")
+    print("constraint violation vector:", c)
+
+xbest = res.x
+
+
+edl_system = redefine_edl_system(edl_system)
+
+edl_system['parachute']['diameter'] = xbest[0]
+edl_system['rover']['wheel_assembly']['wheel']['radius'] = xbest[1]
+edl_system['rover']['chassis']['mass'] = xbest[2]
+edl_system['rover']['wheel_assembly']['speed_reducer']['diam_gear'] = xbest[3]
+edl_system['rocket']['initial_fuel_mass'] = xbest[4]
+edl_system['rocket']['fuel_mass'] = xbest[4]
+
+
+edl_system['team_name'] = 'FunTeamName'
+edl_system['team_number'] = 99
+
+with open('FA24_501team99.pickle', 'wb') as handle:
+    pickle.dump(edl_system, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+time_edl_run, _, edl_system = simulate_edl(
+    edl_system, planet, mission_events, tmax, True
+)
+
+time_edl = time_edl_run[-1]
+
+edl_system['rover'] = simulate_rover(
+    edl_system['rover'], planet, experiment, end_event
+)
+
+time_rover = edl_system['rover']['telemetry']['completion_time']
+
+total_time = time_edl + time_rover
+
+cost = get_cost_edl(edl_system)
+
+
+print('----------------------------------------')
+print('Parachute diameter =', xbest[0])
+print('Fuel mass          =', xbest[4])
+print('Wheel radius       =', xbest[1])
+print('Chassis mass       =', xbest[2])
+print('Gear diameter      =', xbest[3])
+print('EDL time           =', time_edl)
+print('Rover time         =', time_rover)
+print('Total time         =', total_time)
+print('Cost               =', cost)
+print('Touchdown speed    =', edl_system['rover_touchdown_speed'])
+print('----------------------------------------')
